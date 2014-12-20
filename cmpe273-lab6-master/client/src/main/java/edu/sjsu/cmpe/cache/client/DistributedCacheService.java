@@ -77,6 +77,10 @@ public class DistributedCacheService implements CacheServiceInterface {
         return deleteSuccess;
     }
     
+    public String getCacheServerUrl(){
+    	return this.cacheServerUrl;
+    }
+    
     @Override
     public String toString(){
     	return this.cacheServerUrl;
