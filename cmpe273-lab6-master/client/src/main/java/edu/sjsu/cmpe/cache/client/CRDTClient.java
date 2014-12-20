@@ -19,6 +19,8 @@ public class CRDTClient {
 	//read
 	static int countOfCacheServer;
 	public ArrayList<CacheServiceInterface> servers;
+	public String previousValue;
+	public ArrayList<CacheServiceInterface> failedWriteServers;
 	public static HashMap<String, Integer> readValueStorage = new HashMap<String, Integer>();
 	public HashMap<String, String> serverListValueStorage = new HashMap<String, String>();
 	
@@ -41,7 +43,14 @@ public class CRDTClient {
 
 		if (waitingResponseCounter == 0 && failureCounter >= 2) {
 			// send all to undo write
-			
+			try {
+				deleteCacheFromDistributedCache(keyToAdd);
+				writeFailedRollback();
+				
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
 		}
 
 	}
@@ -68,9 +77,22 @@ public class CRDTClient {
 		this.succcessCounter = 0;
 		this.failureCounter = 0;
 		this.waitingResponseCounter = servers.size();
+		
+		//make consistent state
+		//readValueToDistributedCache(keyToAdd);
+		//save previous value
+		savePartialState();
+		
+		// reset counter
+				this.succcessCounter = 0;
+				this.failureCounter = 0;
+				this.waitingResponseCounter = servers.size();
+				this.successServers = new ArrayList<CacheServiceInterface>();
+		
+		failedWriteServers = new ArrayList<CacheServiceInterface>();
 
 		// aynchronous call on clients
-		for (CacheServiceInterface server : servers) {
+		for (final CacheServiceInterface server : servers) {
 			HttpResponse<JsonNode> response = null;
 			try {
 				response = Unirest
@@ -85,7 +107,7 @@ public class CRDTClient {
 								waitingResponseCounter--;
 								failureCounter++;
 								callBackWriteCheck();
-
+								failedWriteServers.add(server);
 							}
 
 							@Override
@@ -97,6 +119,7 @@ public class CRDTClient {
 								} else {
 									waitingResponseCounter--;
 									succcessCounter++;
+									successServers.add(server);
 								}
 								callBackWriteCheck();
 
@@ -111,8 +134,6 @@ public class CRDTClient {
 							}
 						}).get();
 			} catch (Exception e) {
-				waitingResponseCounter--;
-				failureCounter++;
 				//e.printStackTrace();
 			}
 
@@ -125,7 +146,7 @@ public class CRDTClient {
 	
 	//delete cache from all servers
 	public void deleteCacheFromDistributedCache(int key) throws IOException{
-
+		
 		boolean isDeleteSuccess = false;
 
 		// reset counter
@@ -332,7 +353,40 @@ public class CRDTClient {
 		
 	}
 	
+	private void savePartialState(){
+		for(CacheServiceInterface server:servers){
+			try {
+				HttpResponse<JsonNode> response = Unirest.get(server + "/cache/{key}")
+	                    .header("accept", "application/json")
+	                    .routeParam("key", Long.toString(keyToAdd)).asJson();
+				previousValue = response.getBody().getObject().getString("value");
+				if(previousValue == null)continue;
+				else break;
+	        } catch (Exception e) {
+	        	continue;
+	        }
+		}
+	}
 	
 	
+	private void writeFailedRollback(){
+		//delete
+		//put to partial state
+		for(CacheServiceInterface successServers : this.successServers){
+			String prevValue = previousValue;
+			//put it
+			try {
+				HttpResponse<JsonNode> response = Unirest.put(successServers.toString() + "/cache/{key}/{value}")
+						.header("accept", "application/json")
+						.routeParam("key", Long.toString(keyToAdd))
+						.routeParam("value", prevValue)
+						.asJson();
+			} catch (Exception e) {
+				// TODO Auto-generated catch block
+				//e.printStackTrace();
+			}
+		}
+		
+	}
 	
 }
